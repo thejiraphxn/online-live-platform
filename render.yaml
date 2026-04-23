@@ -1,12 +1,13 @@
-# Render Blueprint — single-process API + embedded worker + Next.js frontend.
+# Render Blueprint — backend only (API + embedded worker + Redis).
+# Frontend (Next.js) is deployed to Vercel separately.
 #
 # Everything fits on Render's free tier when:
 #   - External Postgres (use your own — Supabase, Neon, your VPS, etc.)
 #   - EMBED_WORKER=true (worker runs in the API process)
 #   - UptimeRobot or cron-job.org pinging /ping every 10 minutes
 #
-# Set the env vars marked `sync: false` in the Render Dashboard after the
-# Blueprint creates the services.
+# Set env vars marked `sync: false` in the Render Dashboard after Blueprint
+# creates the services. Vercel has its own env config (see README / deploy guide).
 
 services:
   # --- Redis (BullMQ + Socket.IO) ---
@@ -45,8 +46,11 @@ services:
         sync: false
       - key: COOKIE_SECURE
         value: "true"
+      # SameSite=lax is fine because the Vercel frontend proxies /api/* to
+      # this service via Next.js rewrites — so the cookie is first-party
+      # from the browser's POV (stored on the Vercel domain).
       - key: COOKIE_SAMESITE
-        value: none
+        value: lax
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES_IN
@@ -86,23 +90,5 @@ services:
       - key: FFMPEG_CRF
         value: "30"
 
-  # --- Next.js frontend ---
-  - type: web
-    name: olp-web
-    runtime: docker
-    rootDir: frontend
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    plan: free
-    healthCheckPath: /login
-    envVars:
-      - key: NODE_ENV
-        value: production
-      # These are baked into the bundle at Docker build time. If you rename
-      # the api service, re-deploy the web service to rebake.
-      - key: NEXT_PUBLIC_API_BASE
-        sync: false # set to https://olp-api.onrender.com/api/v1
-      - key: NEXT_PUBLIC_SOCKET_URL
-        sync: false # set to https://olp-api.onrender.com
-      - key: BACKEND_URL
-        sync: false # set to https://olp-api.onrender.com
+# Note: the Next.js frontend lives on Vercel, not Render. See the deploy
+# guide for Vercel env setup.
