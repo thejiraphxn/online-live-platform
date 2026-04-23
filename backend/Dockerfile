@@ -44,6 +44,9 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY package.json ./
 EXPOSE 4000
-# `migrate deploy` is idempotent — it applies any pending migrations and
-# becomes a no-op once the DB is up to date. Safe to run on every boot.
-CMD ["sh", "-c", "pnpm prisma migrate deploy && node dist/server.js"]
+# migrate deploy + seed are both idempotent:
+#   - `migrate deploy` applies any pending migrations, no-op if up to date.
+#   - `pnpm seed` uses upsert everywhere, won't duplicate demo data.
+# Set SEED_ON_BOOT=false in the Render dashboard once the demo is seeded,
+# to skip the seed step on subsequent restarts (saves ~3s).
+CMD ["sh", "-c", "pnpm prisma migrate deploy && { [ \"${SEED_ON_BOOT:-true}\" = \"true\" ] && pnpm seed; } ; node dist/server.js"]

@@ -14,6 +14,7 @@ services:
   - type: keyvalue
     name: olp-redis
     plan: free
+    region: singapore
     ipAllowList: [] # private to Render services
 
   # --- Express API + Socket.IO + embedded BullMQ worker ---
@@ -24,6 +25,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: free
+    region: singapore
     healthCheckPath: /health
     envVars:
       - key: PORT
@@ -33,6 +35,11 @@ services:
       - key: LOG_LEVEL
         value: info
       - key: EMBED_WORKER
+        value: "true"
+      # Runs `pnpm seed` (upsert-based, idempotent) on every container boot.
+      # Flip to "false" in the Render dashboard once the demo is seeded to
+      # skip the ~3s seed step on cold starts.
+      - key: SEED_ON_BOOT
         value: "true"
       # Postgres — external (set in Dashboard)
       - key: DATABASE_URL
