@@ -1,4 +1,8 @@
 import './lib/bigint.js'; // must be first — patches BigInt.prototype.toJSON
+// In single-process deployments (Render free, small VPS, etc.) the worker
+// runs embedded in the same process as the HTTP server. Setting
+// EMBED_WORKER=false and running `pnpm worker` separately is still
+// supported for horizontal scaling.
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -65,6 +69,9 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
+// Lightweight keep-alive endpoint for free-tier hosts that spin down on idle.
+// Point UptimeRobot / cron-job.org at this URL every 5–10 minutes.
+app.get('/ping', (_req, res) => res.type('text/plain').send('pong'));
 
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/courses', coursesRouter);
@@ -97,9 +104,31 @@ httpServer.listen(config.port, () => {
   logger.info({ port: config.port }, 'api + socket.io listening');
 });
 
+// Embedded worker — same-process BullMQ consumer. Opt-out by setting
+// EMBED_WORKER=false if you run a dedicated worker service.
+let embeddedWorker: import('bullmq').Worker | null = null;
+if (process.env.EMBED_WORKER !== 'false') {
+  (async () => {
+    try {
+      const mod = await import('./jobs/worker.js');
+      embeddedWorker = mod.recordingWorker;
+      logger.info('embedded worker started');
+    } catch (e) {
+      logger.error({ err: String(e) }, 'failed to start embedded worker');
+    }
+  })();
+}
+
+// Graceful shutdown — let the worker finish its current job before exiting.
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(sig, () => {
+  process.on(sig, async () => {
     logger.info({ sig }, 'shutting down');
+    try {
+      if (embeddedWorker) await embeddedWorker.close();
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    } catch (e) {
+      logger.warn({ err: String(e) }, 'shutdown hiccup');
+    }
     process.exit(0);
   });
 }

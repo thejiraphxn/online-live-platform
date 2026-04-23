@@ -1,0 +1,87 @@
+# Render Blueprint — single-process deploy for free tier.
+#
+# The API service runs the HTTP/WS server AND the BullMQ worker in the same
+# process (see EMBED_WORKER=true). This fits into a single free Render Web
+# Service instead of needing a paid Background Worker.
+#
+# To stay always-on on the free tier, point an external pinger
+# (UptimeRobot, cron-job.org) at /ping every 5–10 minutes.
+#
+# Postgres is external (not managed by Render here) — set DATABASE_URL
+# in the Dashboard.
+
+services:
+  # --- Redis (BullMQ + Socket.IO adapter) ---
+  - type: keyvalue
+    name: olp-redis
+    plan: free
+    ipAllowList: [] # private
+
+  # --- Express API + Socket.IO + embedded BullMQ worker ---
+  - type: web
+    name: olp-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "4000"
+      - key: NODE_ENV
+        value: production
+      - key: EMBED_WORKER
+        value: "true"            # run worker in-process (no separate service)
+      # External Postgres — set manually in Dashboard
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: olp-redis
+          type: keyvalue
+          property: connectionString
+      - key: CORS_ORIGIN
+        sync: false              # https://<your-vercel-app>.vercel.app
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: none              # Vercel + Render = cross-site → need None+Secure
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      # --- S3 (Cloudflare R2 recommended) ---
+      - key: S3_ENDPOINT
+        sync: false
+      - key: PUBLIC_S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_FORCE_PATH_STYLE
+        value: "true"
+      # --- Whisper + LLM (Groq free tier) ---
+      - key: WHISPER_API_KEY
+        sync: false              # gsk_... from console.groq.com
+      - key: WHISPER_API_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: WHISPER_MODEL
+        value: whisper-large-v3
+      # LLM empty → fallback to Whisper creds (same Groq key)
+      - key: LLM_API_URL
+        value: ""
+      - key: LLM_API_KEY
+        value: ""
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      # --- FFmpeg tuning for 512 MB RAM ---
+      - key: FFMPEG_PRESET
+        value: ultrafast
+      - key: FFMPEG_CRF
+        value: "30"              # higher = smaller file, less CPU
