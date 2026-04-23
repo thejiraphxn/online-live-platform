@@ -10,9 +10,15 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # NEXT_PUBLIC_* values are inlined into the client bundle at build time,
-# so they must be present here — not at runtime.
+# so they MUST be present here — runtime env does nothing for them.
+# Render automatically passes envVars (with sync:false values) as build args
+# when the service is built.
 ARG NEXT_PUBLIC_API_BASE=/api/v1
+ARG NEXT_PUBLIC_SOCKET_URL=
+ARG BACKEND_URL=http://localhost:4000
 ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
+ENV BACKEND_URL=$BACKEND_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 # Next's standalone output expects `public/` to exist even when empty.
 RUN mkdir -p public && pnpm build

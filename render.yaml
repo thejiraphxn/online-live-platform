@@ -1,21 +1,19 @@
-# Render Blueprint — single-process deploy for free tier.
+# Render Blueprint — single-process API + embedded worker + Next.js frontend.
 #
-# The API service runs the HTTP/WS server AND the BullMQ worker in the same
-# process (see EMBED_WORKER=true). This fits into a single free Render Web
-# Service instead of needing a paid Background Worker.
+# Everything fits on Render's free tier when:
+#   - External Postgres (use your own — Supabase, Neon, your VPS, etc.)
+#   - EMBED_WORKER=true (worker runs in the API process)
+#   - UptimeRobot or cron-job.org pinging /ping every 10 minutes
 #
-# To stay always-on on the free tier, point an external pinger
-# (UptimeRobot, cron-job.org) at /ping every 5–10 minutes.
-#
-# Postgres is external (not managed by Render here) — set DATABASE_URL
-# in the Dashboard.
+# Set the env vars marked `sync: false` in the Render Dashboard after the
+# Blueprint creates the services.
 
 services:
-  # --- Redis (BullMQ + Socket.IO adapter) ---
+  # --- Redis (BullMQ + Socket.IO) ---
   - type: keyvalue
     name: olp-redis
     plan: free
-    ipAllowList: [] # private
+    ipAllowList: [] # private to Render services
 
   # --- Express API + Socket.IO + embedded BullMQ worker ---
   - type: web
@@ -32,8 +30,8 @@ services:
       - key: NODE_ENV
         value: production
       - key: EMBED_WORKER
-        value: "true"            # run worker in-process (no separate service)
-      # External Postgres — set manually in Dashboard
+        value: "true"
+      # Postgres — external (set in Dashboard)
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL
@@ -41,23 +39,25 @@ services:
           name: olp-redis
           type: keyvalue
           property: connectionString
+      # Cross-site cookies because Render gives olp-web + olp-api different
+      # origins. Both must be HTTPS (Render default) and SameSite=None.
       - key: CORS_ORIGIN
-        sync: false              # https://<your-vercel-app>.vercel.app
+        sync: false
       - key: COOKIE_SECURE
         value: "true"
       - key: COOKIE_SAMESITE
-        value: none              # Vercel + Render = cross-site → need None+Secure
+        value: none
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 7d
-      # --- S3 (Cloudflare R2 recommended) ---
+      # AWS S3
       - key: S3_ENDPOINT
         sync: false
       - key: PUBLIC_S3_ENDPOINT
         sync: false
       - key: S3_REGION
-        value: auto
+        sync: false
       - key: S3_ACCESS_KEY
         sync: false
       - key: S3_SECRET_KEY
@@ -65,23 +65,44 @@ services:
       - key: S3_BUCKET
         sync: false
       - key: S3_FORCE_PATH_STYLE
-        value: "true"
-      # --- Whisper + LLM (Groq free tier) ---
+        value: "false"
+      # Whisper (Groq free tier)
       - key: WHISPER_API_KEY
-        sync: false              # gsk_... from console.groq.com
+        sync: false
       - key: WHISPER_API_BASE_URL
         value: https://api.groq.com/openai/v1
       - key: WHISPER_MODEL
         value: whisper-large-v3
-      # LLM empty → fallback to Whisper creds (same Groq key)
+      # LLM (Ollama Cloud / Groq)
       - key: LLM_API_URL
-        value: ""
+        sync: false
       - key: LLM_API_KEY
-        value: ""
+        sync: false
       - key: LLM_MODEL
-        value: llama-3.3-70b-versatile
-      # --- FFmpeg tuning for 512 MB RAM ---
+        sync: false
+      # FFmpeg tuning for 512MB RAM
       - key: FFMPEG_PRESET
         value: ultrafast
       - key: FFMPEG_CRF
-        value: "30"              # higher = smaller file, less CPU
+        value: "30"
+
+  # --- Next.js frontend ---
+  - type: web
+    name: olp-web
+    runtime: docker
+    rootDir: frontend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # These are baked into the bundle at Docker build time. If you rename
+      # the api service, re-deploy the web service to rebake.
+      - key: NEXT_PUBLIC_API_BASE
+        sync: false # set to https://olp-api.onrender.com/api/v1
+      - key: NEXT_PUBLIC_SOCKET_URL
+        sync: false # set to https://olp-api.onrender.com
+      - key: BACKEND_URL
+        sync: false # set to https://olp-api.onrender.com
