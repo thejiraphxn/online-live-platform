@@ -30,6 +30,8 @@ services:
         value: "4000"
       - key: NODE_ENV
         value: production
+      - key: LOG_LEVEL
+        value: info
       - key: EMBED_WORKER
         value: "true"
       # Postgres — external (set in Dashboard)
@@ -77,6 +79,10 @@ services:
         value: https://api.groq.com/openai/v1
       - key: WHISPER_MODEL
         value: whisper-large-v3
+      # Groq's hosted Whisper caps uploads at 25 MB. Bump only if you run
+      # a self-hosted Whisper (faster-whisper-server) behind WHISPER_API_BASE_URL.
+      - key: WHISPER_MAX_UPLOAD_MB
+        value: "25"
       # LLM (Ollama Cloud / Groq)
       - key: LLM_API_URL
         sync: false

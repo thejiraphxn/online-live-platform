@@ -44,4 +44,6 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY package.json ./
 EXPOSE 4000
-CMD ["node", "dist/server.js"]
+# `migrate deploy` is idempotent — it applies any pending migrations and
+# becomes a no-op once the DB is up to date. Safe to run on every boot.
+CMD ["sh", "-c", "pnpm prisma migrate deploy && node dist/server.js"]
