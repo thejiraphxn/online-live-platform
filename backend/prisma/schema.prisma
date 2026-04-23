@@ -1,0 +1,168 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CourseRole {
+  TEACHER
+  STUDENT
+}
+
+enum CourseVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum SessionStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  ENDED
+}
+
+enum RecordingStatus {
+  PENDING
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+}
+
+model User {
+  id                 String               @id @default(cuid())
+  email              String               @unique
+  name               String
+  passwordHash       String
+  isDemo             Boolean              @default(false)
+  demoBlurb          String?              // one-line description shown on the demo login page
+  createdAt          DateTime             @default(now())
+  memberships        CourseMember[]
+  ownedCourses       Course[]             @relation("CourseOwner")
+  progress           SessionProgress[]
+  questionsAsked     SessionQuestion[]    @relation("AskedBy")
+  questionsAnswered  SessionQuestion[]    @relation("AnsweredBy")
+  chatMessages       SessionChatMessage[]
+
+  @@index([isDemo])
+}
+
+model Course {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  title       String
+  description String?
+  coverColor  String?          // hex color for the card cover; null → pick from palette on FE
+  joinCode    String           @unique
+  visibility  CourseVisibility @default(PRIVATE)
+  ownerId     String
+  owner       User             @relation("CourseOwner", fields: [ownerId], references: [id])
+  createdAt   DateTime         @default(now())
+  members     CourseMember[]
+  sessions    CourseSession[]
+
+  @@index([ownerId])
+  @@index([visibility])
+}
+
+model CourseMember {
+  id       String     @id @default(cuid())
+  courseId String
+  userId   String
+  role     CourseRole
+  joinedAt DateTime   @default(now())
+  course   Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@index([userId])
+}
+
+model CourseSession {
+  id          String             @id @default(cuid())
+  courseId    String
+  course      Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  scheduledAt DateTime?
+  status      SessionStatus      @default(DRAFT)
+  startedAt   DateTime?
+  endedAt     DateTime?
+  recording   SessionRecording?
+  progress    SessionProgress[]
+  questions   SessionQuestion[]
+  chats       SessionChatMessage[]
+  createdAt   DateTime           @default(now())
+
+  @@index([courseId, scheduledAt])
+}
+
+model SessionQuestion {
+  id               String        @id @default(cuid())
+  sessionId        String
+  askedByUserId    String
+  text             String
+  answeredAt       DateTime?
+  answeredByUserId String?
+  answerText       String?
+  createdAt        DateTime      @default(now())
+  session          CourseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  askedBy          User          @relation("AskedBy", fields: [askedByUserId], references: [id])
+  answeredBy       User?         @relation("AnsweredBy", fields: [answeredByUserId], references: [id])
+
+  @@index([sessionId, createdAt])
+}
+
+model SessionChatMessage {
+  id                 String        @id @default(cuid())
+  sessionId          String
+  userId             String
+  text               String
+  attachmentKey      String?
+  attachmentName     String?
+  attachmentMimeType String?
+  attachmentSize     Int?
+  createdAt          DateTime      @default(now())
+  session            CourseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}
+
+model SessionProgress {
+  id          String        @id @default(cuid())
+  userId      String
+  sessionId   String
+  positionSec Int           @default(0)
+  completed   Boolean       @default(false)
+  updatedAt   DateTime      @updatedAt
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session     CourseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sessionId])
+  @@index([userId, updatedAt])
+}
+
+model SessionRecording {
+  id           String          @id @default(cuid())
+  sessionId    String          @unique
+  session      CourseSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  status       RecordingStatus @default(PENDING)
+  uploadId     String?
+  s3UploadId   String?
+  rawKey       String?
+  playbackKey  String?
+  thumbnailKey String?
+  chapters     Json?           // [{ timeSec: number, label: string }] — teacher-authored
+  autoChapters Json?           // [{ timeSec: number, label: string }] — LLM-generated fallback
+  transcript   Json?           // [{ startSec: number, endSec: number, text: string }]
+  summary      String?         // 2-3 sentence LLM summary of the lecture
+  durationSec  Int?
+  sizeBytes    BigInt?
+  errorMessage String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
