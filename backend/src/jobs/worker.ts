@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import '../lib/bigint.js';
 import { Worker } from 'bullmq';
+import { RecordingStatus } from '@prisma/client';
 import { redis } from '../lib/redis.js';
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
@@ -281,7 +282,7 @@ export const recordingWorker = new Worker(
         await prisma.sessionRecording.update({
           where: { id: recording.id },
           data: {
-            status: 'READY',
+            status: RecordingStatus.READY,
             playbackKey,
             thumbnailKey,
             durationSec: duration,
@@ -359,7 +360,7 @@ export const recordingWorker = new Worker(
       logger.error({ recordingId: recording.id, err: msg }, 'worker failed');
       await prisma.sessionRecording.update({
         where: { id: recording.id },
-        data: { status: 'FAILED', errorMessage: msg.slice(0, 500) },
+        data: { status: RecordingStatus.FAILED, errorMessage: msg.slice(0, 500) },
       });
       throw err;
     } finally {
@@ -385,7 +386,7 @@ async function recoverStuckOnStartup() {
     const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
     const stuck = await prisma.sessionRecording.findMany({
       where: {
-        status: { in: ['UPLOADING', 'PROCESSING'] },
+        status: { in: [RecordingStatus.UPLOADING, RecordingStatus.PROCESSING] },
         updatedAt: { lt: fiveMinAgo },
       },
       select: { id: true, status: true, rawKey: true, sessionId: true },
@@ -398,7 +399,7 @@ async function recoverStuckOnStartup() {
         await prisma.sessionRecording.update({
           where: { id: r.id },
           data: {
-            status: 'FAILED',
+            status: RecordingStatus.FAILED,
             errorMessage: `recovered from stuck ${r.status} state — no raw upload`,
           },
         });
@@ -407,7 +408,7 @@ async function recoverStuckOnStartup() {
         // Raw exists → re-enqueue. Worker will pick up.
         await prisma.sessionRecording.update({
           where: { id: r.id },
-          data: { status: 'PROCESSING', errorMessage: null },
+          data: { status: RecordingStatus.PROCESSING, errorMessage: null },
         });
         await recordingQueue.add(
           'process',

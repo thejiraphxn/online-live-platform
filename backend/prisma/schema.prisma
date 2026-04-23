@@ -49,6 +49,7 @@ model User {
   questionsAsked     SessionQuestion[]    @relation("AskedBy")
   questionsAnswered  SessionQuestion[]    @relation("AnsweredBy")
   chatMessages       SessionChatMessage[]
+  attendance         SessionAttendance[]
 
   @@index([isDemo])
 }
@@ -98,6 +99,7 @@ model CourseSession {
   progress    SessionProgress[]
   questions   SessionQuestion[]
   chats       SessionChatMessage[]
+  attendance  SessionAttendance[]
   createdAt   DateTime           @default(now())
 
   @@index([courseId, scheduledAt])
@@ -147,6 +149,22 @@ model SessionProgress {
 
   @@unique([userId, sessionId])
   @@index([userId, updatedAt])
+}
+
+// One row per "stint" a user spent in a live session. A user who leaves and
+// rejoins produces multiple rows — total time is the sum of (leftAt - joinedAt)
+// across them. `leftAt` is null only while the socket is still connected.
+model SessionAttendance {
+  id        String        @id @default(cuid())
+  sessionId String
+  userId    String
+  joinedAt  DateTime      @default(now())
+  leftAt    DateTime?
+  session   CourseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, userId])
+  @@index([sessionId, joinedAt])
 }
 
 model SessionRecording {

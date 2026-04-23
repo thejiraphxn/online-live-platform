@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { CourseRole } from '@prisma/client';
 import { requireAuth, requireCourseRole } from '../../middleware/auth.js';
 import { presignPut, presignGet } from '../storage/s3.js';
 import { prisma } from '../../lib/prisma.js';
@@ -19,7 +20,7 @@ const initSchema = z.object({
 // client uses the returned key when sending the message via socket/REST.
 uploadsRouter.post(
   '/init',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT']),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT]),
   async (req, res, next) => {
     try {
       const { filename, mimeType, size } = initSchema.parse(req.body);
@@ -36,7 +37,7 @@ uploadsRouter.post(
 // Resolve a temporary GET URL for displaying/downloading a chat attachment.
 uploadsRouter.get(
   '/sign',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT'], { allowPublicRead: true }),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT], { allowPublicRead: true }),
   async (req, res, next) => {
     try {
       const key = String(req.query.key ?? '');
@@ -53,7 +54,7 @@ uploadsRouter.get(
 // Historical chat messages (with attachment metadata)
 uploadsRouter.get(
   '/messages',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT'], { allowPublicRead: true }),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT], { allowPublicRead: true }),
   async (req, res, next) => {
     try {
       const msgs = await prisma.sessionChatMessage.findMany({

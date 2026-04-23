@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { RecordingStatus } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth } from '../../middleware/auth.js';
 
@@ -60,7 +61,7 @@ progressRouter.get('/continue', async (req, res, next) => {
         title: r.session.title,
         positionSec: r.positionSec,
         durationSec: r.session.recording?.durationSec ?? null,
-        status: r.session.recording?.status ?? 'PENDING',
+        status: r.session.recording?.status ?? RecordingStatus.PENDING,
         course: r.session.course,
         updatedAt: r.updatedAt,
       })),

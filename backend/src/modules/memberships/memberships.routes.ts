@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { CourseRole } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireCourseRole } from '../../middleware/auth.js';
 
@@ -9,7 +10,7 @@ membersRouter.use(requireAuth);
 
 membersRouter.get(
   '/',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT']),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT]),
   async (req, res, next) => {
     try {
       const members = await prisma.courseMember.findMany({
@@ -34,12 +35,12 @@ membersRouter.get(
 
 const inviteSchema = z.object({
   email: z.string().email(),
-  role: z.enum(['TEACHER', 'STUDENT']).default('STUDENT'),
+  role: z.nativeEnum(CourseRole).default(CourseRole.STUDENT),
 });
 
 membersRouter.post(
   '/',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const { email, role } = inviteSchema.parse(req.body);
@@ -59,10 +60,10 @@ membersRouter.post(
 
 membersRouter.patch(
   '/:userId',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
-      const { role } = z.object({ role: z.enum(['TEACHER', 'STUDENT']) }).parse(req.body);
+      const { role } = z.object({ role: z.nativeEnum(CourseRole) }).parse(req.body);
       const member = await prisma.courseMember.update({
         where: {
           courseId_userId: { courseId: req.params.courseId, userId: req.params.userId },
@@ -78,7 +79,7 @@ membersRouter.patch(
 
 membersRouter.delete(
   '/:userId',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       await prisma.courseMember.delete({

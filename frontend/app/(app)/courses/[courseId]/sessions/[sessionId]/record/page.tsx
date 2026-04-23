@@ -1,13 +1,13 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { Recorder, type RecorderStatus } from '@/components/record/Recorder';
 import { PreflightCheck } from '@/components/record/PreflightCheck';
 import { Button } from '@/components/ui/Button';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { useToast } from '@/components/ui/Toast';
-import { useLiveRoom } from '@/components/live/useLiveRoom';
+import { useLiveRoom, pickPrimaryStream } from '@/components/live/useLiveRoom';
 import { LivePanel } from '@/components/live/LivePanel';
 import { RemoteVideo } from '@/components/live/RemoteVideo';
 import { CourseRole, RecordingStatus } from '@/lib/enums';
@@ -33,6 +33,54 @@ export default function RecordPage({ params }: { params: { courseId: string; ses
 
   const isLive = recorderStatus === 'recording';
   const [liveState, liveActions] = useLiveRoom(params.sessionId, true);
+
+  // Webcam (separate from the screen+mic pipeline that Recorder owns).
+  // Added into the mesh as an à-la-carte track so students see the teacher's
+  // face next to the screen share.
+  const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
+  const webcamTrackRef = useRef<MediaStreamTrack | null>(null);
+
+  async function openWebcam() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const track = stream.getVideoTracks()[0];
+      if (!track) throw new Error('no video track from camera');
+      webcamTrackRef.current = track;
+      setWebcamStream(stream);
+      liveActions.addTrack(track, stream);
+      liveActions.setMedia({ isCamOn: true });
+      // Auto-stop the mesh track when the user kills the camera from the OS
+      // (e.g. closing a webcam privacy shutter).
+      track.onended = () => closeWebcam();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'camera permission denied');
+    }
+  }
+
+  function closeWebcam() {
+    const track = webcamTrackRef.current;
+    if (track) {
+      liveActions.removeTrack(track);
+      track.stop();
+    }
+    if (webcamStream) {
+      for (const t of webcamStream.getTracks()) t.stop();
+      liveActions.streamGone(webcamStream.id);
+    }
+    webcamTrackRef.current = null;
+    setWebcamStream(null);
+    liveActions.setMedia({ isCamOn: false });
+  }
+
+  // Clean up webcam when the page unmounts so the camera indicator drops.
+  useEffect(() => {
+    return () => {
+      if (webcamTrackRef.current) {
+        webcamTrackRef.current.stop();
+        webcamTrackRef.current = null;
+      }
+    };
+  }, []);
 
   async function reload() {
     try {
@@ -177,6 +225,40 @@ export default function RecordPage({ params }: { params: { courseId: string; ses
             />
           )}
 
+          {liveState.connected && (
+            <div className="border border-ink rounded p-3 flex items-center gap-3 flex-wrap">
+              <div className="flex-1 min-w-[180px]">
+                <div className="text-[11px] font-semibold text-ink-soft">YOUR CAMERA</div>
+                <div className="text-xs text-ink-soft">
+                  {webcamStream
+                    ? 'Students see your face alongside the screen share'
+                    : 'Off — students only see the screen share'}
+                </div>
+              </div>
+              {webcamStream ? (
+                <Button variant="danger" onClick={closeWebcam}>
+                  📷 Turn off camera
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={openWebcam}>
+                  📹 Turn on camera
+                </Button>
+              )}
+            </div>
+          )}
+
+          {webcamStream && (
+            <div className="border border-ink rounded p-3">
+              <div className="text-[11px] font-semibold text-ink-soft mb-2">WEBCAM PREVIEW</div>
+              <RemoteVideo
+                stream={webcamStream}
+                muted
+                label="you"
+                className="aspect-video max-w-xs"
+              />
+            </div>
+          )}
+
           {publishingStudents.length > 0 && (
             <div className="border border-ink rounded p-3">
               <div className="text-[11px] font-semibold text-ink-soft mb-2">
@@ -186,7 +268,7 @@ export default function RecordPage({ params }: { params: { courseId: string; ses
                 {publishingStudents.map((p) => (
                   <RemoteVideo
                     key={p.socketId}
-                    stream={liveState.remoteStreams.get(p.socketId) ?? null}
+                    stream={pickPrimaryStream(liveState.remoteStreams.get(p.socketId))}
                     label={p.name}
                     className="aspect-video"
                   />
@@ -248,7 +330,7 @@ export default function RecordPage({ params }: { params: { courseId: string; ses
           <LivePanel
             state={liveState}
             actions={liveActions}
-            myRole="TEACHER"
+            myRole={CourseRole.TEACHER}
             courseId={params.courseId}
             sessionId={params.sessionId}
           />

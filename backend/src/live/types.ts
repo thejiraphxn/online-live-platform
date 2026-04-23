@@ -4,7 +4,8 @@
  * Room key = `session:<sessionId>`. One room per session.
  */
 
-export type Role = 'TEACHER' | 'STUDENT';
+import type { CourseRole } from '@prisma/client';
+export type Role = CourseRole;
 
 export type Participant = {
   socketId: string;
@@ -12,7 +13,9 @@ export type Participant = {
   name: string;
   role: Role;
   hasHandRaised: boolean;
-  isPublishing: boolean; // currently streaming cam/mic
+  isPublishing: boolean; // allowed to publish cam/mic tracks into the mesh
+  isMicOn: boolean; // live mic state (muted via track.enabled=false on client)
+  isCamOn: boolean; // live camera state
 };
 
 // Client → Server
@@ -36,6 +39,20 @@ export interface ClientToServerEvents {
   'hand:accept': (payload: { sessionId: string; studentSocketId: string }) => void;
   'hand:reject': (payload: { sessionId: string; studentSocketId: string }) => void;
 
+  // Broadcast mic/cam UI state so peers can render indicators. Actual media
+  // track toggling happens client-side via track.enabled; this event is
+  // purely for UI reflection of that state.
+  'media:toggle': (payload: {
+    sessionId: string;
+    isMicOn?: boolean;
+    isCamOn?: boolean;
+  }) => void;
+  // Emitted when a peer stops publishing a specific media stream (e.g. the
+  // teacher turns off the webcam). Lets remote clients drop the stale
+  // stream from their UI without waiting for WebRTC track-ended signals,
+  // which are flaky across browsers.
+  'media:stream-gone': (payload: { sessionId: string; streamId: string }) => void;
+
   // WebRTC signaling — relayed verbatim to the `to` socket
   'rtc:offer': (payload: { to: string; sdp: RTCSessionDescriptionInit }) => void;
   'rtc:answer': (payload: { to: string; sdp: RTCSessionDescriptionInit }) => void;
@@ -55,6 +72,9 @@ export interface ServerToClientEvents {
 
   'hand:accepted': (payload: { fromSocketId: string }) => void;
   'hand:rejected': () => void;
+
+  // Relayed verbatim from the publishing peer.
+  'media:stream-gone': (payload: { fromSocketId: string; streamId: string }) => void;
 
   'rtc:offer': (payload: { from: string; sdp: RTCSessionDescriptionInit }) => void;
   'rtc:answer': (payload: { from: string; sdp: RTCSessionDescriptionInit }) => void;

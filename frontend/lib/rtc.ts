@@ -38,6 +38,9 @@ export type RTCMeshCallbacks = {
 export class RTCMesh {
   private peers = new Map<string, PeerState>();
   private localStream: MediaStream | null = null;
+  // Tracks added via addLocalTrack (on top of the bulk localStream). Needed
+  // so new peers that connect later get these tracks too.
+  private extraLocalTracks = new Map<string, { track: MediaStreamTrack; stream: MediaStream }>();
   private socket: OLPSocket;
   private mySocketId: () => string | undefined;
   private cb: RTCMeshCallbacks;
@@ -76,6 +79,12 @@ export class RTCMesh {
             const already = pc.getSenders().some((s) => s.track?.id === track.id);
             if (!already) pc.addTrack(track, this.localStream);
           }
+        }
+        // Also attach any à-la-carte tracks (e.g. teacher's webcam added on
+        // top of the screen-share).
+        for (const { track, stream } of this.extraLocalTracks.values()) {
+          const already = pc.getSenders().some((s) => s.track?.id === track.id);
+          if (!already) pc.addTrack(track, stream);
         }
 
         // setLocalDescription() with no args auto-creates the appropriate
@@ -220,6 +229,36 @@ export class RTCMesh {
         const already = peer.pc.getSenders().some((s) => s.track?.id === track.id);
         if (!already) peer.pc.addTrack(track, this.localStream);
       }
+    }
+    for (const { track, stream } of this.extraLocalTracks.values()) {
+      const already = peer.pc.getSenders().some((s) => s.track?.id === track.id);
+      if (!already) peer.pc.addTrack(track, stream);
+    }
+  }
+
+  /**
+   * Publish a single track (on top of whatever's in setLocalStream).
+   * Used for additive tracks like a teacher's webcam while screen-sharing.
+   * addTrack on each peer fires onnegotiationneeded which renegotiates.
+   */
+  addLocalTrack(track: MediaStreamTrack, stream: MediaStream) {
+    this.extraLocalTracks.set(track.id, { track, stream });
+    for (const { pc } of this.peers.values()) {
+      const already = pc.getSenders().some((s) => s.track?.id === track.id);
+      if (!already) pc.addTrack(track, stream);
+    }
+  }
+
+  /**
+   * Stop sending a track previously added via addLocalTrack. Replaces the
+   * sender's track with null (keeps the transceiver in place — cheaper than
+   * removeTrack, avoids a full m-section rebuild). Caller owns track.stop().
+   */
+  removeLocalTrack(track: MediaStreamTrack) {
+    this.extraLocalTracks.delete(track.id);
+    for (const { pc } of this.peers.values()) {
+      const sender = pc.getSenders().find((s) => s.track?.id === track.id);
+      if (sender) sender.replaceTrack(null).catch(() => {});
     }
   }
 

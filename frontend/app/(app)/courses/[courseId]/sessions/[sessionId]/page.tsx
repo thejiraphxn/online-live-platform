@@ -8,6 +8,7 @@ import { fmtDuration } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { StudentLive } from '@/components/live/StudentLive';
+import { AttendanceSection } from '@/components/live/AttendanceSection';
 import { CourseRole, RecordingStatus, SessionStatus } from '@/lib/enums';
 
 type Chapter = { timeSec: number; label: string };
@@ -536,6 +537,10 @@ export default function SessionPage({ params }: { params: { courseId: string; se
               </li>
             </ul>
           </div>
+
+          {myRole === CourseRole.TEACHER && (
+            <AttendanceSection courseId={params.courseId} sessionId={params.sessionId} />
+          )}
 
           <div className="border border-ink rounded p-3.5">
             <div className="text-[11px] font-semibold text-ink-soft flex justify-between items-center">

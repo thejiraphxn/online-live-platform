@@ -101,7 +101,7 @@ export function PreflightCheck({
           <li key={c.label} className="flex items-center gap-2.5 text-sm">
             <span
               className={[
-                'w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs',
+                'w-7 h-7 rounded-full flex items-center justify-center font-bold text-base leading-none',
                 c.state === 'ok'
                   ? 'bg-ok-soft text-ok border border-ok'
                   : c.state === 'warn'

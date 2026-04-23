@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { useLiveRoom } from './useLiveRoom';
+import { useLiveRoom, pickPrimaryStream, pickSecondaryStream } from './useLiveRoom';
 import { LivePanel } from './LivePanel';
 import { RemoteVideo } from './RemoteVideo';
 import { useToast } from '@/components/ui/Toast';
@@ -20,11 +20,19 @@ export function StudentLive({
   const toast = useToast();
   const [myStream, setMyStream] = useState<MediaStream | null>(null);
   const [muted, setMuted] = useState(true); // start muted to satisfy autoplay policies
+  // Local UI state mirrors track.enabled — we keep our own source of truth
+  // so the button updates instantly even before the room:updated echo.
+  const [micOn, setMicOn] = useState(true);
+  const [camOn, setCamOn] = useState(true);
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const pipVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const teacher = state.participants.find((p) => p.role === CourseRole.TEACHER);
-  const teacherStream = teacher ? state.remoteStreams.get(teacher.socketId) ?? null : null;
+  const teacherStreams = teacher ? state.remoteStreams.get(teacher.socketId) : undefined;
+  // Primary = screen+mic (the stream carrying audio). Secondary = webcam
+  // (video-only). Teacher may publish only primary, only webcam, or both.
+  const teacherStream = pickPrimaryStream(teacherStreams);
+  const teacherWebcam = pickSecondaryStream(teacherStreams, teacherStream);
 
   useEffect(() => {
     if (mainVideoRef.current && mainVideoRef.current.srcObject !== teacherStream) {
@@ -33,8 +41,10 @@ export function StudentLive({
   }, [teacherStream]);
 
   useEffect(() => {
-    if (localVideoRef.current) localVideoRef.current.srcObject = myStream;
-  }, [myStream]);
+    if (pipVideoRef.current && pipVideoRef.current.srcObject !== teacherWebcam) {
+      pipVideoRef.current.srcObject = teacherWebcam;
+    }
+  }, [teacherWebcam]);
 
   useEffect(() => {
     if (!state.handAcceptedBy) return;
@@ -44,7 +54,10 @@ export function StudentLive({
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         setMyStream(stream);
         actions.publish(stream);
-        toast.success("You're live with your camera");
+        setMicOn(true);
+        setCamOn(true);
+        actions.setMedia({ isMicOn: true, isCamOn: true });
+        toast.success("You're live — mic + camera on");
       } catch (e: any) {
         toast.error(e?.message ?? 'mic/camera permission denied');
       }
@@ -52,19 +65,39 @@ export function StudentLive({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.handAcceptedBy]);
 
+  function toggleMic() {
+    if (!myStream) return;
+    const next = !micOn;
+    for (const t of myStream.getAudioTracks()) t.enabled = next;
+    setMicOn(next);
+    actions.setMedia({ isMicOn: next });
+  }
+
+  function toggleCam() {
+    if (!myStream) return;
+    const next = !camOn;
+    for (const t of myStream.getVideoTracks()) t.enabled = next;
+    setCamOn(next);
+    actions.setMedia({ isCamOn: next });
+  }
+
   function stopPublishing() {
+    const goneId = myStream?.id;
     if (myStream) {
       myStream.getTracks().forEach((t) => t.stop());
       setMyStream(null);
     }
     actions.publish(null);
+    if (goneId) actions.streamGone(goneId);
     actions.raiseHand(false);
+    actions.setMedia({ isMicOn: false, isCamOn: false });
+    setMicOn(true);
+    setCamOn(true);
     toast.info('Stopped publishing');
   }
 
   function unmute() {
     setMuted(false);
-    // Most browsers require an explicit play() after the first user interaction
     mainVideoRef.current?.play().catch(() => {});
   }
 
@@ -111,7 +144,21 @@ export function StudentLive({
               <div className="text-[10px] text-zinc-500 font-mono mt-2">
                 socket: {state.connected ? '✓' : '…'} ·{' '}
                 people: {state.participants.length} ·{' '}
-                teachers: {state.participants.filter((p) => p.role === 'TEACHER').length}
+                teachers: {state.participants.filter((p) => p.role === CourseRole.TEACHER).length}
+              </div>
+            </div>
+          )}
+          {teacherWebcam && (
+            <div className="absolute bottom-3 right-3 w-32 md:w-40 aspect-video bg-black rounded border border-white/30 shadow-lg overflow-hidden">
+              <video
+                ref={pipVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] font-mono px-1 py-0.5">
+                {teacher?.name ?? 'teacher'}
               </div>
             </div>
           )}
@@ -122,9 +169,9 @@ export function StudentLive({
             <span>{state.connected ? '🟢' : '🔴'}</span>
             <span>{state.participants.length} in room</span>
             <span>·</span>
-            <span>T:{state.participants.filter((p) => p.role === 'TEACHER').length}</span>
+            <span>T:{state.participants.filter((p) => p.role === CourseRole.TEACHER).length}</span>
             <span>·</span>
-            <span>tracks:{state.remoteStreams.size}</span>
+            <span>tracks:{Array.from(state.remoteStreams.values()).reduce((n, s) => n + s.length, 0)}</span>
           </div>
         </div>
 
@@ -135,8 +182,14 @@ export function StudentLive({
               {myself?.hasHandRaised
                 ? 'Hand raised — waiting for teacher'
                 : myStream
-                  ? 'You are live with camera + mic'
-                  : 'Raise hand to ask with your camera + mic'}
+                  ? micOn && camOn
+                    ? 'You are live with mic + camera'
+                    : camOn
+                      ? 'You are live (mic muted)'
+                      : micOn
+                        ? 'You are live (camera off)'
+                        : 'You are live (mic + camera off)'
+                  : 'Raise hand to join the conversation'}
             </div>
           </div>
           {teacherStream && muted && (
@@ -155,9 +208,17 @@ export function StudentLive({
             </Button>
           )}
           {myStream && (
-            <Button variant="danger" onClick={stopPublishing}>
-              ■ Stop camera
-            </Button>
+            <>
+              <Button variant={micOn ? 'primary' : 'ghost'} onClick={toggleMic}>
+                {micOn ? '🎤 Mic on' : '🔇 Mic off'}
+              </Button>
+              <Button variant={camOn ? 'primary' : 'ghost'} onClick={toggleCam}>
+                {camOn ? '📹 Cam on' : '📷 Cam off'}
+              </Button>
+              <Button variant="danger" onClick={stopPublishing}>
+                ■ Leave stage
+              </Button>
+            </>
           )}
         </div>
 
@@ -178,7 +239,7 @@ export function StudentLive({
         <LivePanel
           state={state}
           actions={actions}
-          myRole="STUDENT"
+          myRole={CourseRole.STUDENT}
           courseId={courseId}
           sessionId={sessionId}
         />

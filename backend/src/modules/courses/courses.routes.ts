@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { CourseRole, CourseVisibility } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireCourseRole } from '../../middleware/auth.js';
 import { pageSchema, toPaginated } from '../../lib/pagination.js';
 import { generateJoinCode } from '../../lib/joinCode.js';
+import { abortMultipart, deleteObjects } from '../storage/s3.js';
+import { logger } from '../../lib/logger.js';
 
 export const coursesRouter = Router();
 
@@ -68,7 +71,7 @@ const createSchema = z.object({
   code: z.string().min(2).max(20),
   title: z.string().min(1).max(120),
   description: z.string().max(500).optional(),
-  visibility: z.enum(['PRIVATE', 'PUBLIC']).optional(),
+  visibility: z.nativeEnum(CourseVisibility).optional(),
 });
 
 const updateSchema = createSchema.partial().extend({
@@ -87,12 +90,12 @@ coursesRouter.post('/', async (req, res, next) => {
             data: {
               ...body,
               joinCode,
-              visibility: body.visibility ?? 'PRIVATE',
+              visibility: body.visibility ?? CourseVisibility.PRIVATE,
               ownerId: req.userId!,
             },
           });
           await tx.courseMember.create({
-            data: { courseId: c.id, userId: req.userId!, role: 'TEACHER' },
+            data: { courseId: c.id, userId: req.userId!, role: CourseRole.TEACHER },
           });
           return c;
         });
@@ -120,7 +123,7 @@ coursesRouter.post('/join', async (req, res, next) => {
     const member = await prisma.courseMember.upsert({
       where: { courseId_userId: { courseId: course.id, userId: req.userId! } },
       update: {}, // keep existing role if already a member
-      create: { courseId: course.id, userId: req.userId!, role: 'STUDENT' },
+      create: { courseId: course.id, userId: req.userId!, role: CourseRole.STUDENT },
     });
     res.status(201).json({
       courseId: course.id,
@@ -137,7 +140,7 @@ coursesRouter.post('/join', async (req, res, next) => {
 // Rotate the join code (teacher only) — useful if it leaked.
 coursesRouter.post(
   '/:courseId/rotate-join-code',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       for (let i = 0; i < 5; i++) {
@@ -175,9 +178,9 @@ coursesRouter.get('/:courseId', async (req, res, next) => {
     if (!course) return res.status(404).json({ error: 'not found' });
     const myRole = course.members[0]?.role ?? null;
     // PUBLIC courses: anyone signed in can view — they see as "guest" until enrolled.
-    if (!myRole && course.visibility !== 'PUBLIC')
+    if (!myRole && course.visibility !== CourseVisibility.PUBLIC)
       return res.status(403).json({ error: 'forbidden' });
-    const isTeacher = myRole === 'TEACHER';
+    const isTeacher = myRole === CourseRole.TEACHER;
     res.json({
       id: course.id,
       code: course.code,
@@ -199,7 +202,7 @@ coursesRouter.get('/:courseId', async (req, res, next) => {
 
 coursesRouter.patch(
   '/:courseId',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const body = updateSchema.parse(req.body);
@@ -221,10 +224,48 @@ coursesRouter.patch(
 
 coursesRouter.delete(
   '/:courseId',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
-      await prisma.course.delete({ where: { id: req.params.courseId } });
+      const courseId = req.params.courseId;
+
+      // Gather all S3 keys owned by this course before DB cascade wipes rows.
+      // One query for recordings + one for chat attachments is enough — the
+      // keys are small and we're in a TEACHER-only destructive path.
+      const sessions = await prisma.courseSession.findMany({
+        where: { courseId },
+        select: {
+          id: true,
+          recording: {
+            select: { rawKey: true, playbackKey: true, thumbnailKey: true, s3UploadId: true },
+          },
+          chats: { select: { attachmentKey: true } },
+        },
+      });
+
+      // Abort any in-flight multipart uploads first — otherwise the parts
+      // keep billing even after we delete the DB pointer.
+      const multiparts = sessions
+        .flatMap((s) => (s.recording ? [s.recording] : []))
+        .filter((r) => r.rawKey && r.s3UploadId);
+      await Promise.all(
+        multiparts.map((r) => abortMultipart(r.rawKey!, r.s3UploadId!)),
+      );
+
+      const keys: string[] = [];
+      for (const s of sessions) {
+        if (s.recording?.rawKey) keys.push(s.recording.rawKey);
+        if (s.recording?.playbackKey) keys.push(s.recording.playbackKey);
+        if (s.recording?.thumbnailKey) keys.push(s.recording.thumbnailKey);
+        for (const m of s.chats) if (m.attachmentKey) keys.push(m.attachmentKey);
+      }
+      if (keys.length > 0) await deleteObjects(keys);
+
+      await prisma.course.delete({ where: { id: courseId } });
+      logger.info(
+        { courseId, sessionCount: sessions.length, keyCount: keys.length },
+        'course deleted with S3 cleanup',
+      );
       res.status(204).end();
     } catch (e) {
       next(e);

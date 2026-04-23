@@ -17,8 +17,15 @@ type Props = {
   sessionId: string;
 };
 
+const LivePanelTab = {
+  CHAT: 'chat',
+  QUESTIONS: 'questions',
+  PEOPLE: 'people',
+} as const;
+type LivePanelTab = (typeof LivePanelTab)[keyof typeof LivePanelTab];
+
 export function LivePanel({ state, actions, myRole, courseId, sessionId }: Props) {
-  const [tab, setTab] = useState<'chat' | 'questions' | 'people'>('chat');
+  const [tab, setTab] = useState<LivePanelTab>(LivePanelTab.CHAT);
   const unansweredCount = state.questions.filter((q) => !q.answeredAt).length;
   const handsRaised = state.participants.filter(
     (p) => p.role === CourseRole.STUDENT && p.hasHandRaised,
@@ -80,10 +87,13 @@ export function LivePanel({ state, actions, myRole, courseId, sessionId }: Props
   return (
     <div className="border border-ink rounded flex flex-col bg-paper overflow-hidden h-[640px]">
       <div className="flex border-b border-ink bg-paper-alt">
-        <TabBtn active={tab === 'chat'} onClick={() => setTab('chat')}>
+        <TabBtn active={tab === LivePanelTab.CHAT} onClick={() => setTab(LivePanelTab.CHAT)}>
           Chat <span className="text-[10px] font-mono text-ink-mute ml-1">{state.chat.length}</span>
         </TabBtn>
-        <TabBtn active={tab === 'questions'} onClick={() => setTab('questions')}>
+        <TabBtn
+          active={tab === LivePanelTab.QUESTIONS}
+          onClick={() => setTab(LivePanelTab.QUESTIONS)}
+        >
           Questions{' '}
           {unansweredCount > 0 && (
             <span className="ml-1 px-1.5 rounded-full bg-warn text-white text-[10px] font-bold">
@@ -91,7 +101,7 @@ export function LivePanel({ state, actions, myRole, courseId, sessionId }: Props
             </span>
           )}
         </TabBtn>
-        <TabBtn active={tab === 'people'} onClick={() => setTab('people')}>
+        <TabBtn active={tab === LivePanelTab.PEOPLE} onClick={() => setTab(LivePanelTab.PEOPLE)}>
           People{' '}
           {handsRaised > 0 && (
             <span className="ml-1 px-1.5 rounded-full bg-warn text-white text-[10px] font-bold animate-pulse">
@@ -104,7 +114,7 @@ export function LivePanel({ state, actions, myRole, courseId, sessionId }: Props
         </TabBtn>
       </div>
 
-      {tab === 'chat' && (
+      {tab === LivePanelTab.CHAT && (
         <ChatTab
           state={state}
           actions={actions}
@@ -112,8 +122,12 @@ export function LivePanel({ state, actions, myRole, courseId, sessionId }: Props
           sessionId={sessionId}
         />
       )}
-      {tab === 'questions' && <QuestionsTab state={state} actions={actions} myRole={myRole} />}
-      {tab === 'people' && <PeopleTab state={state} actions={actions} myRole={myRole} />}
+      {tab === LivePanelTab.QUESTIONS && (
+        <QuestionsTab state={state} actions={actions} myRole={myRole} />
+      )}
+      {tab === LivePanelTab.PEOPLE && (
+        <PeopleTab state={state} actions={actions} myRole={myRole} />
+      )}
     </div>
   );
 }
@@ -504,6 +518,22 @@ function PeopleTab({
               </span>
               {p.isPublishing && (
                 <span className="text-[10px] text-live font-bold">● live</span>
+              )}
+              {p.isPublishing && (
+                <span
+                  className={`text-[10px] ${p.isMicOn ? 'text-ink-soft' : 'text-ink-mute line-through'}`}
+                  title={p.isMicOn ? 'Mic on' : 'Mic muted'}
+                >
+                  {p.isMicOn ? '🎤' : '🔇'}
+                </span>
+              )}
+              {p.isPublishing && (
+                <span
+                  className={`text-[10px] ${p.isCamOn ? 'text-ink-soft' : 'text-ink-mute line-through'}`}
+                  title={p.isCamOn ? 'Camera on' : 'Camera off'}
+                >
+                  {p.isCamOn ? '📹' : '📷'}
+                </span>
               )}
               {p.hasHandRaised && (
                 <span className="text-[10px] text-warn font-bold">✋ hand up</span>

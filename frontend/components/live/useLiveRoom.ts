@@ -11,9 +11,29 @@ export type LiveRoomState = {
   participants: Participant[];
   chat: ChatMessage[];
   questions: Question[];
-  remoteStreams: Map<string, MediaStream>;
+  // Multiple streams per peer: teacher publishes screen+mic AND (optionally)
+  // a separate webcam stream. Use pickPrimaryStream/pickSecondaryStream to
+  // distinguish them in the UI.
+  remoteStreams: Map<string, MediaStream[]>;
   handAcceptedBy: string | null; // when student hand is accepted, this is the teacher's socketId
 };
+
+/** Primary = the stream carrying audio (teacher screen+mic, or student's combined av). */
+export function pickPrimaryStream(
+  streams: MediaStream[] | undefined,
+): MediaStream | null {
+  if (!streams || streams.length === 0) return null;
+  return streams.find((s) => s.getAudioTracks().length > 0) ?? streams[0];
+}
+
+/** Secondary = an additional video-only stream (typically the teacher's webcam). */
+export function pickSecondaryStream(
+  streams: MediaStream[] | undefined,
+  primary: MediaStream | null,
+): MediaStream | null {
+  if (!streams || streams.length === 0) return null;
+  return streams.find((s) => s !== primary && s.getVideoTracks().length > 0) ?? null;
+}
 
 export type LiveRoomActions = {
   sendChat: (text: string, attachment?: ChatAttachment | null) => void;
@@ -23,6 +43,16 @@ export type LiveRoomActions = {
   acceptHand: (studentSocketId: string) => void;
   rejectHand: (studentSocketId: string) => void;
   publish: (stream: MediaStream | null) => void;
+  // Add/remove an à-la-carte track (e.g. teacher webcam on top of the screen
+  // share). Does not replace the main published stream.
+  addTrack: (track: MediaStreamTrack, stream: MediaStream) => void;
+  removeTrack: (track: MediaStreamTrack) => void;
+  // Broadcast mic/cam UI state. Actual audio/video toggling is done by the
+  // caller via track.enabled or by calling addTrack/removeTrack.
+  setMedia: (patch: { isMicOn?: boolean; isCamOn?: boolean }) => void;
+  // Tell peers to drop a specific stream from their UI (pair with
+  // removeTrack / unpublish — WebRTC track-end signals are flaky).
+  streamGone: (streamId: string) => void;
   leave: () => void;
 };
 
@@ -38,7 +68,7 @@ export function useLiveRoom(sessionId: string, enabled = true): [LiveRoomState, 
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream[]>>(new Map());
   const [handAcceptedBy, setHandAcceptedBy] = useState<string | null>(null);
 
   const socketRef = useRef<OLPSocket | null>(null);
@@ -69,7 +99,12 @@ export function useLiveRoom(sessionId: string, enabled = true): [LiveRoomState, 
           onRemoteStream: (id, stream) =>
             setRemoteStreams((m) => {
               const n = new Map(m);
-              n.set(id, stream);
+              const list = n.get(id) ?? [];
+              if (!list.some((x) => x.id === stream.id)) {
+                n.set(id, [...list, stream]);
+              } else {
+                n.set(id, list);
+              }
               return n;
             }),
           onPeerClosed: (id) =>
@@ -83,11 +118,9 @@ export function useLiveRoom(sessionId: string, enabled = true): [LiveRoomState, 
       meshRef.current = mesh;
 
       const joinRoom = () => {
-        console.log('[live] connected, socket id:', s.id);
         setMySocketId(s.id);
         setConnected(true);
         s.emit('room:join', sessionId, (r) => {
-          console.log('[live] room:join ack:', r);
           if (!r.ok) {
             setError(r.error);
             return;
@@ -105,13 +138,11 @@ export function useLiveRoom(sessionId: string, enabled = true): [LiveRoomState, 
         console.warn('[live] connect_error:', e.message);
         setError(e.message);
       });
-      s.on('disconnect', (reason) => {
-        console.log('[live] disconnected:', reason);
+      s.on('disconnect', () => {
         setConnected(false);
       });
 
       s.on('room:state', ({ participants }) => {
-        console.log('[live] room:state:', participants.map((p) => `${p.role}/${p.name}`));
         setParticipants(participants);
         // Idempotent safety net: if room:joined was missed (slow network,
         // reconnect, etc.), make sure we have peer connections to everyone.
@@ -120,7 +151,6 @@ export function useLiveRoom(sessionId: string, enabled = true): [LiveRoomState, 
         }
       });
       s.on('room:joined', (p) => {
-        console.log('[live] room:joined:', p.role, p.name, p.socketId);
         setParticipants((xs) => [...xs.filter((x) => x.socketId !== p.socketId), p]);
         mesh.connectTo(p.socketId);
       });
@@ -140,6 +170,18 @@ export function useLiveRoom(sessionId: string, enabled = true): [LiveRoomState, 
 
       s.on('hand:accepted', ({ fromSocketId }) => setHandAcceptedBy(fromSocketId));
       s.on('hand:rejected', () => setHandAcceptedBy(null));
+
+      s.on('media:stream-gone', ({ fromSocketId, streamId }) => {
+        setRemoteStreams((m) => {
+          const list = m.get(fromSocketId);
+          if (!list) return m;
+          const next = list.filter((x) => x.id !== streamId);
+          const n = new Map(m);
+          if (next.length === 0) n.delete(fromSocketId);
+          else n.set(fromSocketId, next);
+          return n;
+        });
+      });
     })();
 
     return () => {
@@ -198,6 +240,24 @@ export function useLiveRoom(sessionId: string, enabled = true): [LiveRoomState, 
       // "connectTo for each participant" dance needed.
       meshRef.current?.setLocalStream(stream);
     }, []),
+    addTrack: useCallback((track: MediaStreamTrack, stream: MediaStream) => {
+      meshRef.current?.addLocalTrack(track, stream);
+    }, []),
+    removeTrack: useCallback((track: MediaStreamTrack) => {
+      meshRef.current?.removeLocalTrack(track);
+    }, []),
+    setMedia: useCallback(
+      (patch: { isMicOn?: boolean; isCamOn?: boolean }) => {
+        socketRef.current?.emit('media:toggle', { sessionId, ...patch });
+      },
+      [sessionId],
+    ),
+    streamGone: useCallback(
+      (streamId: string) => {
+        socketRef.current?.emit('media:stream-gone', { sessionId, streamId });
+      },
+      [sessionId],
+    ),
     leave: useCallback(() => {
       meshRef.current?.closeAll();
       socketRef.current?.emit('room:leave', sessionId);

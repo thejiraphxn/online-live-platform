@@ -28,7 +28,7 @@ function NavItem({
           : 'bg-transparent text-ink border-transparent hover:bg-paper-alt',
       ].join(' ')}
     >
-      <span className="w-4 text-center font-mono text-xs">{icon}</span>
+      <span className="w-6 text-center font-mono text-lg leading-none">{icon}</span>
       <span>{label}</span>
     </Link>
   );
@@ -72,7 +72,7 @@ export function Shell({
     <div className="h-screen bg-paper text-ink flex">
       <aside className="w-[200px] bg-paper-alt border-r border-ink flex flex-col p-3 gap-1 flex-shrink-0">
         <div className="font-bold text-base px-2 py-1 flex items-center gap-2">
-          <span>◐</span>
+          <span className="text-2xl leading-none">◐</span>
           <span>OLP</span>
         </div>
         <div className="h-px bg-ink/20 my-2" />

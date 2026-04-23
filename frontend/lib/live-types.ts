@@ -10,6 +10,8 @@ export type Participant = {
   role: Role;
   hasHandRaised: boolean;
   isPublishing: boolean;
+  isMicOn: boolean;
+  isCamOn: boolean;
 };
 
 export type ChatAttachment = {
@@ -64,6 +66,12 @@ export interface ClientToServerEvents {
   'hand:raise': (payload: { sessionId: string; raised: boolean }) => void;
   'hand:accept': (payload: { sessionId: string; studentSocketId: string }) => void;
   'hand:reject': (payload: { sessionId: string; studentSocketId: string }) => void;
+  'media:toggle': (payload: {
+    sessionId: string;
+    isMicOn?: boolean;
+    isCamOn?: boolean;
+  }) => void;
+  'media:stream-gone': (payload: { sessionId: string; streamId: string }) => void;
   'rtc:offer': (payload: { to: string; sdp: RTCSessionDescriptionInit }) => void;
   'rtc:answer': (payload: { to: string; sdp: RTCSessionDescriptionInit }) => void;
   'rtc:ice': (payload: { to: string; candidate: RTCIceCandidateInit }) => void;
@@ -79,6 +87,7 @@ export interface ServerToClientEvents {
   'question:answered': (q: Question) => void;
   'hand:accepted': (payload: { fromSocketId: string }) => void;
   'hand:rejected': () => void;
+  'media:stream-gone': (payload: { fromSocketId: string; streamId: string }) => void;
   'rtc:offer': (payload: { from: string; sdp: RTCSessionDescriptionInit }) => void;
   'rtc:answer': (payload: { from: string; sdp: RTCSessionDescriptionInit }) => void;
   'rtc:ice': (payload: { from: string; candidate: RTCIceCandidateInit }) => void;

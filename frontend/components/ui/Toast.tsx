@@ -44,7 +44,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                   : 'border-accent text-accent',
             ].join(' ')}
           >
-            <span className="font-bold">
+            <span className="font-bold text-lg leading-none w-5 text-center">
               {t.kind === 'success' ? '✓' : t.kind === 'error' ? '!' : 'i'}
             </span>
             <span className="flex-1 text-ink">{t.text}</span>

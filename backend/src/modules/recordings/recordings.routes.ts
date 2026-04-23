@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { CourseRole, RecordingStatus, SessionStatus } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireCourseRole } from '../../middleware/auth.js';
 import {
@@ -17,7 +18,7 @@ recordingsRouter.use(requireAuth);
 // Init: allocate SessionRecording row + S3 multipart upload
 recordingsRouter.post(
   '/',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const { sessionId } = req.params;
@@ -27,7 +28,12 @@ recordingsRouter.post(
 
       // one recording per session
       const existing = await prisma.sessionRecording.findUnique({ where: { sessionId } });
-      if (existing && ['PROCESSING', 'READY'].includes(existing.status))
+      if (
+        existing &&
+        ([RecordingStatus.PROCESSING, RecordingStatus.READY] as RecordingStatus[]).includes(
+          existing.status,
+        )
+      )
         return res.status(409).json({ error: 'recording already finalized' });
 
       const rawKey = `raw/${sessionId}/${Date.now()}.webm`;
@@ -37,7 +43,7 @@ recordingsRouter.post(
         ? await prisma.sessionRecording.update({
             where: { id: existing.id },
             data: {
-              status: 'UPLOADING',
+              status: RecordingStatus.UPLOADING,
               rawKey,
               s3UploadId,
               playbackKey: null,
@@ -46,12 +52,12 @@ recordingsRouter.post(
             },
           })
         : await prisma.sessionRecording.create({
-            data: { sessionId, status: 'UPLOADING', rawKey, s3UploadId },
+            data: { sessionId, status: RecordingStatus.UPLOADING, rawKey, s3UploadId },
           });
 
       await prisma.courseSession.update({
         where: { id: sessionId },
-        data: { status: 'LIVE', startedAt: new Date() },
+        data: { status: SessionStatus.LIVE, startedAt: new Date() },
       });
 
       res.status(201).json({
@@ -68,7 +74,7 @@ recordingsRouter.post(
 // Presigned URL for a single part (1-indexed)
 recordingsRouter.post(
   '/:recordingId/part-url',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const { partNumber } = z
@@ -96,7 +102,7 @@ const completeSchema = z.object({
 
 recordingsRouter.post(
   '/:recordingId/complete',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const { parts } = completeSchema.parse(req.body);
@@ -109,7 +115,7 @@ recordingsRouter.post(
       // Idempotent: if multipart was already completed in a previous call
       // (but enqueue failed), just re-enqueue the processing job.
       if (!recording.s3UploadId) {
-        if (recording.status === 'READY') return res.json({ ok: true, recording });
+        if (recording.status === RecordingStatus.READY) return res.json({ ok: true, recording });
         await recordingQueue.add(
           'process',
           { recordingId: recording.id },
@@ -122,12 +128,12 @@ recordingsRouter.post(
 
       const updated = await prisma.sessionRecording.update({
         where: { id: recording.id },
-        data: { status: 'PROCESSING', s3UploadId: null },
+        data: { status: RecordingStatus.PROCESSING, s3UploadId: null },
       });
 
       await prisma.courseSession.update({
         where: { id: recording.sessionId },
-        data: { status: 'ENDED', endedAt: new Date() },
+        data: { status: SessionStatus.ENDED, endedAt: new Date() },
       });
 
       await recordingQueue.add(
@@ -146,7 +152,7 @@ recordingsRouter.post(
 // Abort — used when the client crashes mid-upload
 recordingsRouter.post(
   '/:recordingId/abort',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const recording = await prisma.sessionRecording.findUnique({
@@ -157,7 +163,7 @@ recordingsRouter.post(
         await abortMultipart(recording.rawKey, recording.s3UploadId);
       await prisma.sessionRecording.update({
         where: { id: recording.id },
-        data: { status: 'FAILED', errorMessage: 'Aborted by teacher', s3UploadId: null },
+        data: { status: RecordingStatus.FAILED, errorMessage: 'Aborted by teacher', s3UploadId: null },
       });
       res.json({ ok: true });
     } catch (e) {
@@ -180,7 +186,7 @@ const chaptersSchema = z.object({
 
 recordingsRouter.put(
   '/:recordingId/chapters',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const { chapters } = chaptersSchema.parse(req.body);
@@ -200,7 +206,7 @@ recordingsRouter.put(
 // UPLOADING/PROCESSING with no raw upload or an uploadable raw file.
 recordingsRouter.post(
   '/:recordingId/reset',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const recording = await prisma.sessionRecording.findUnique({
@@ -209,17 +215,16 @@ recordingsRouter.post(
       if (!recording) return res.status(404).json({ error: 'not found' });
 
       // Abort any in-flight multipart upload so S3 storage is released.
+      // abortMultipart() logs failures internally — never throws.
       if (recording.rawKey && recording.s3UploadId) {
-        try {
-          await abortMultipart(recording.rawKey, recording.s3UploadId);
-        } catch {}
+        await abortMultipart(recording.rawKey, recording.s3UploadId);
       }
       await prisma.sessionRecording.delete({ where: { id: recording.id } });
       // Also revert the session back to SCHEDULED so the "Start recording"
       // button is available again.
       await prisma.courseSession.update({
         where: { id: recording.sessionId },
-        data: { status: 'SCHEDULED', startedAt: null, endedAt: null },
+        data: { status: SessionStatus.SCHEDULED, startedAt: null, endedAt: null },
       });
       res.json({ ok: true });
     } catch (e) {
@@ -231,7 +236,7 @@ recordingsRouter.post(
 // Retry a failed recording — just re-enqueues the process job if raw exists
 recordingsRouter.post(
   '/:recordingId/retry',
-  requireCourseRole('courseId', ['TEACHER']),
+  requireCourseRole('courseId', [CourseRole.TEACHER]),
   async (req, res, next) => {
     try {
       const recording = await prisma.sessionRecording.findUnique({
@@ -242,7 +247,7 @@ recordingsRouter.post(
         return res.status(400).json({ error: 'no raw upload to retry' });
       await prisma.sessionRecording.update({
         where: { id: recording.id },
-        data: { status: 'PROCESSING', errorMessage: null },
+        data: { status: RecordingStatus.PROCESSING, errorMessage: null },
       });
       await recordingQueue.add(
         'process',
@@ -259,7 +264,7 @@ recordingsRouter.post(
 // Poll status
 recordingsRouter.get(
   '/:recordingId',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT']),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT]),
   async (req, res, next) => {
     try {
       const recording = await prisma.sessionRecording.findUnique({

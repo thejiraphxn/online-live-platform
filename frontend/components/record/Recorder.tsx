@@ -179,14 +179,6 @@ export function Recorder({
         ...screen.getVideoTracks(),
         ...audioTracks,
       ]);
-      // Debug: surface what actually got into the recorder so we can spot
-      // silent recordings in the browser console.
-      console.log('[recorder] starting', {
-        videoTracks: screen.getVideoTracks().length,
-        audioTracks: audioTracks.length,
-        audioLabel: audioTracks[0]?.label,
-        audioSettings: audioTracks[0]?.getSettings?.(),
-      });
       streamRef.current = merged;
       if (videoRef.current) videoRef.current.srcObject = merged;
       onStream?.(merged); // push to WebRTC mesh
@@ -210,11 +202,6 @@ export function Recorder({
         mimeType,
         videoBitsPerSecond: 2_500_000,
         audioBitsPerSecond: 128_000, // explicit — some browsers drop audio silently otherwise
-      });
-      console.log('[recorder] MediaRecorder', {
-        requested: mimeType,
-        actual: mr.mimeType,
-        state: mr.state,
       });
       mr.ondataavailable = (ev) => {
         if (ev.data.size === 0) return;

@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { prisma } from '../lib/prisma.js';
-import type { CourseRole } from '@prisma/client';
+import { CourseVisibility, type CourseRole } from '@prisma/client';
 
 declare global {
   namespace Express {
@@ -67,7 +67,7 @@ export function requireCourseRole(
           where: { id: courseId },
           select: { visibility: true },
         });
-        if (course?.visibility === 'PUBLIC') return next();
+        if (course?.visibility === CourseVisibility.PUBLIC) return next();
       }
       return res.status(403).json({ error: 'forbidden' });
     } catch (e: any) {

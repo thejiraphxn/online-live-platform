@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { CourseRole, RecordingStatus } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireCourseRole } from '../../middleware/auth.js';
 import { presignGet } from '../storage/s3.js';
@@ -9,7 +10,7 @@ playbackRouter.use(requireAuth);
 
 playbackRouter.get(
   '/',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT'], { allowPublicRead: true }),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT], { allowPublicRead: true }),
   async (req, res, next) => {
     try {
       const session = await prisma.courseSession.findUnique({
@@ -20,12 +21,12 @@ playbackRouter.get(
         return res.status(404).json({ error: 'session not found' });
       if (
         !session.recording ||
-        session.recording.status !== 'READY' ||
+        session.recording.status !== RecordingStatus.READY ||
         !session.recording.playbackKey
       ) {
         return res.status(409).json({
           error: 'not ready',
-          status: session.recording?.status ?? 'PENDING',
+          status: session.recording?.status ?? RecordingStatus.PENDING,
         });
       }
       const [url, thumbnailUrl] = await Promise.all([

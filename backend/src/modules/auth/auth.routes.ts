@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import { CourseRole } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../config.js';
 import { requireAuth } from '../../middleware/auth.js';
@@ -84,7 +85,7 @@ authRouter.get('/demo/list', demoLimiter, async (_req, res, next) => {
         email: u.email,
         blurb: u.demoBlurb,
         // "primary role" = the first course role they have, falling back to STUDENT.
-        role: u.memberships[0]?.role ?? 'STUDENT',
+        role: u.memberships[0]?.role ?? CourseRole.STUDENT,
       })),
     );
   } catch (e) {

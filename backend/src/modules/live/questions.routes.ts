@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { CourseRole } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireCourseRole } from '../../middleware/auth.js';
 
@@ -10,7 +11,7 @@ questionsRouter.use(requireAuth);
 // Real-time delivery happens via Socket.io.
 questionsRouter.get(
   '/',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT']),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT]),
   async (req, res, next) => {
     try {
       const rows = await prisma.sessionQuestion.findMany({
@@ -45,7 +46,7 @@ questionsRouter.get(
 // Also allow REST POST as a fallback (if socket is unavailable).
 questionsRouter.post(
   '/',
-  requireCourseRole('courseId', ['TEACHER', 'STUDENT']),
+  requireCourseRole('courseId', [CourseRole.TEACHER, CourseRole.STUDENT]),
   async (req, res, next) => {
     try {
       const text = String(req.body?.text ?? '').trim();

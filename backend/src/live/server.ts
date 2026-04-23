@@ -1,6 +1,7 @@
 import type { Server as HttpServer } from 'node:http';
 import jwt from 'jsonwebtoken';
 import { Server as IOServer } from 'socket.io';
+import { CourseRole } from '@prisma/client';
 import { config } from '../config.js';
 import { logger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
@@ -16,19 +17,42 @@ type SocketData = {
   userId: string;
   name: string;
   joinedSessionId?: string;
+  // ID of the open SessionAttendance row for the current room, if any. Set
+  // on room:join, cleared + closed (leftAt written) on room:leave / disconnect.
+  attendanceId?: string;
   hasHandRaised: boolean;
   isPublishing: boolean;
+  isMicOn: boolean;
+  isCamOn: boolean;
 };
 
 function roomKey(sessionId: string) {
   return `session:${sessionId}`;
 }
 
-function isTeacher(role: string) {
-  return role === 'TEACHER';
+function isTeacher(role: string): role is typeof CourseRole.TEACHER {
+  return role === CourseRole.TEACHER;
+}
+
+// Close any attendance rows left open from a previous process (crash /
+// restart). We can't know the real leftAt, so we stamp it to joinedAt —
+// producing a zero-duration stint. Undercounting on crash is safer than
+// inflating attendance with hours of dead time.
+async function recoverOpenAttendance() {
+  try {
+    const result: bigint | number = await prisma.$executeRaw`
+      UPDATE "SessionAttendance" SET "leftAt" = "joinedAt" WHERE "leftAt" IS NULL
+    `;
+    const count = typeof result === 'bigint' ? Number(result) : result;
+    if (count > 0) logger.warn({ count }, 'closed orphan attendance rows from previous boot');
+  } catch (err) {
+    logger.warn({ err }, 'attendance recovery failed');
+  }
 }
 
 export function attachLiveServer(http: HttpServer) {
+  void recoverOpenAttendance();
+
   // Match the HTTP CORS policy — support single / list / wildcard.
   const raw = config.corsOrigin.trim();
   const allowAll = raw === '*';
@@ -76,6 +100,8 @@ export function attachLiveServer(http: HttpServer) {
       socket.data.name = user.name;
       socket.data.hasHandRaised = false;
       socket.data.isPublishing = false;
+      socket.data.isMicOn = false;
+      socket.data.isCamOn = false;
       next();
     } catch (e: any) {
       next(new Error(e?.message ?? 'auth-failed'));
@@ -93,6 +119,18 @@ export function attachLiveServer(http: HttpServer) {
     });
   }
 
+  async function closeAttendance(attendanceId: string | undefined) {
+    if (!attendanceId) return;
+    try {
+      await prisma.sessionAttendance.update({
+        where: { id: attendanceId },
+        data: { leftAt: new Date() },
+      });
+    } catch (err) {
+      logger.warn({ err, attendanceId }, 'failed to close attendance row');
+    }
+  }
+
   async function currentParticipants(sessionId: string): Promise<Participant[]> {
     const sockets = await io.in(roomKey(sessionId)).fetchSockets();
     const out: Participant[] = [];
@@ -106,6 +144,8 @@ export function attachLiveServer(http: HttpServer) {
         role: member.role,
         hasHandRaised: s.data.hasHandRaised,
         isPublishing: s.data.isPublishing,
+        isMicOn: s.data.isMicOn,
+        isCamOn: s.data.isCamOn,
       });
     }
     return out;
@@ -122,11 +162,32 @@ export function attachLiveServer(http: HttpServer) {
       }
       if (socket.data.joinedSessionId && socket.data.joinedSessionId !== sessionId) {
         socket.leave(roomKey(socket.data.joinedSessionId));
+        // The user is switching sessions — close the previous attendance row
+        // before opening a new one so the old stint has a real leftAt.
+        await closeAttendance(socket.data.attendanceId);
+        socket.data.attendanceId = undefined;
       }
       socket.data.joinedSessionId = sessionId;
       socket.data.hasHandRaised = false;
       socket.data.isPublishing = isTeacher(member.role);
+      // Teacher starts with mic on (the screen-recording pipeline captures
+      // mic too); camera is opt-in via the webcam toggle. Students default
+      // to off — they flip on after the hand-raise is accepted.
+      socket.data.isMicOn = isTeacher(member.role);
+      socket.data.isCamOn = false;
       socket.join(roomKey(sessionId));
+
+      // Open a new attendance row. If the DB write fails we still let the
+      // user into the room — attendance tracking is best-effort, not a gate.
+      try {
+        const row = await prisma.sessionAttendance.create({
+          data: { sessionId, userId: socket.data.userId },
+          select: { id: true },
+        });
+        socket.data.attendanceId = row.id;
+      } catch (err) {
+        logger.warn({ err, sessionId, userId: socket.data.userId }, 'failed to open attendance row');
+      }
 
       const me: Participant = {
         socketId: socket.id,
@@ -135,6 +196,8 @@ export function attachLiveServer(http: HttpServer) {
         role: member.role,
         hasHandRaised: false,
         isPublishing: socket.data.isPublishing,
+        isMicOn: socket.data.isMicOn,
+        isCamOn: socket.data.isCamOn,
       };
       socket.to(roomKey(sessionId)).emit('room:joined', me);
       const participants = await currentParticipants(sessionId);
@@ -142,13 +205,18 @@ export function attachLiveServer(http: HttpServer) {
       io.to(roomKey(sessionId)).emit('room:state', { participants });
     });
 
-    socket.on('room:leave', (sessionId) => {
+    socket.on('room:leave', async (sessionId) => {
       socket.leave(roomKey(sessionId));
       socket.to(roomKey(sessionId)).emit('room:left', {
         socketId: socket.id,
         userId: socket.data.userId,
         name: socket.data.name,
       });
+      await closeAttendance(socket.data.attendanceId);
+      socket.data.attendanceId = undefined;
+      if (socket.data.joinedSessionId === sessionId) {
+        socket.data.joinedSessionId = undefined;
+      }
     });
 
     socket.on('chat:send', async ({ sessionId, text, attachment }) => {
@@ -251,6 +319,8 @@ export function attachLiveServer(http: HttpServer) {
         role: member.role,
         hasHandRaised: raised,
         isPublishing: socket.data.isPublishing,
+        isMicOn: socket.data.isMicOn,
+        isCamOn: socket.data.isCamOn,
       };
       io.to(roomKey(sessionId)).emit('room:updated', p);
     });
@@ -260,16 +330,53 @@ export function attachLiveServer(http: HttpServer) {
       if (!member || !isTeacher(member.role)) return;
       io.to(studentSocketId).emit('hand:accepted', { fromSocketId: socket.id });
       const target = io.sockets.sockets.get(studentSocketId);
-      if (target) target.data.isPublishing = true;
+      if (target) {
+        target.data.isPublishing = true;
+        // When the teacher accepts a hand, default the student's mic on
+        // (the whole point of raising a hand is to be heard). Camera stays
+        // off — the student can flip it on themselves.
+        target.data.isMicOn = true;
+        target.data.hasHandRaised = false;
+      }
       io.to(roomKey(sessionId)).emit('room:state', {
         participants: await currentParticipants(sessionId),
       });
+    });
+
+    socket.on('media:toggle', async ({ sessionId, isMicOn, isCamOn }) => {
+      if (socket.data.joinedSessionId !== sessionId) return;
+      const member = await getMembership(socket.data.userId, sessionId);
+      if (!member) return;
+      // Students only move their own mic/cam state after they've been
+      // allowed to publish; teachers can always toggle their own.
+      if (!isTeacher(member.role) && !socket.data.isPublishing) return;
+      if (typeof isMicOn === 'boolean') socket.data.isMicOn = isMicOn;
+      if (typeof isCamOn === 'boolean') socket.data.isCamOn = isCamOn;
+      const p: Participant = {
+        socketId: socket.id,
+        userId: socket.data.userId,
+        name: socket.data.name,
+        role: member.role,
+        hasHandRaised: socket.data.hasHandRaised,
+        isPublishing: socket.data.isPublishing,
+        isMicOn: socket.data.isMicOn,
+        isCamOn: socket.data.isCamOn,
+      };
+      io.to(roomKey(sessionId)).emit('room:updated', p);
     });
 
     socket.on('hand:reject', async ({ sessionId, studentSocketId }) => {
       const member = await getMembership(socket.data.userId, sessionId);
       if (!member || !isTeacher(member.role)) return;
       io.to(studentSocketId).emit('hand:rejected');
+    });
+
+    socket.on('media:stream-gone', ({ sessionId, streamId }) => {
+      if (socket.data.joinedSessionId !== sessionId || !streamId) return;
+      socket.to(roomKey(sessionId)).emit('media:stream-gone', {
+        fromSocketId: socket.id,
+        streamId,
+      });
     });
 
     // WebRTC signaling relay
@@ -283,8 +390,10 @@ export function attachLiveServer(http: HttpServer) {
       io.to(to).emit('rtc:ice', { from: socket.id, candidate });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       const sessionId = socket.data.joinedSessionId;
+      await closeAttendance(socket.data.attendanceId);
+      socket.data.attendanceId = undefined;
       if (sessionId) {
         socket.to(roomKey(sessionId)).emit('room:left', {
           socketId: socket.id,
@@ -296,7 +405,7 @@ export function attachLiveServer(http: HttpServer) {
           .then((participants) =>
             io.to(roomKey(sessionId)).emit('room:state', { participants }),
           )
-          .catch(() => {});
+          .catch((err) => logger.warn({ err, sessionId }, 'failed to rebroadcast room state'));
       }
       logger.info({ userId: socket.data.userId }, 'socket disconnected');
     });
