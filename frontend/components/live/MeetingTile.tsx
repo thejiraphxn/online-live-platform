@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/Avatar';
 import { CourseRole } from '@/lib/enums';
 
@@ -39,6 +39,16 @@ export function MeetingTile({
 }: MeetingTileProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  // Track count is reactive: a remote MediaStream is mutated in place when
+  // additional tracks arrive (each `pc.ontrack` fires one at a time). If we
+  // computed `hasVideoTrack` only at render time, a tile that mounted with
+  // an audio-only stream would never re-render to show the video track that
+  // arrived a tick later — exactly the "student turned on camera but the
+  // teacher still sees an avatar" bug.
+  const [videoTrackCount, setVideoTrackCount] = useState(
+    () => stream?.getVideoTracks().length ?? 0,
+  );
+
   // Stable ref binding — avoids unnecessary srcObject reassignment that
   // would tear down the WebRTC track and cause flicker.
   useEffect(() => {
@@ -47,8 +57,25 @@ export function MeetingTile({
     }
   }, [stream]);
 
+  // Subscribe to the stream's track-list mutations so we re-render when a
+  // late-arriving track flips the avatar→video state.
+  useEffect(() => {
+    if (!stream) {
+      setVideoTrackCount(0);
+      return;
+    }
+    const recompute = () => setVideoTrackCount(stream.getVideoTracks().length);
+    recompute();
+    stream.addEventListener('addtrack', recompute);
+    stream.addEventListener('removetrack', recompute);
+    return () => {
+      stream.removeEventListener('addtrack', recompute);
+      stream.removeEventListener('removetrack', recompute);
+    };
+  }, [stream]);
+
   const isTeacher = role === CourseRole.TEACHER;
-  const hasVideoTrack = !!stream && stream.getVideoTracks().length > 0;
+  const hasVideoTrack = videoTrackCount > 0;
   // Render the <video> when we actually have a video track AND the publisher
   // hasn't toggled their camera off. For screen-share streams the publisher
   // doesn't have an isCamOn flag, so callers pass isCamOn=true explicitly.
@@ -65,16 +92,23 @@ export function MeetingTile({
         className,
       ].join(' ')}
     >
-      {showVideo ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted={audioMuted}
-          className={`w-full h-full ${fitMode === 'contain' ? 'object-contain' : 'object-cover'}`}
-        />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center bg-paper-alt">
+      {/* Keep the <video> mounted at all times so srcObject stays bound and
+          the browser auto-displays tracks the moment they're added — even
+          if the avatar fallback was showing first. We only hide it when no
+          video should be visible. */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={audioMuted}
+        className={[
+          'absolute inset-0 w-full h-full',
+          fitMode === 'contain' ? 'object-contain' : 'object-cover',
+          showVideo ? '' : 'invisible',
+        ].join(' ')}
+      />
+      {!showVideo && (
+        <div className="absolute inset-0 flex items-center justify-center bg-paper-alt">
           <div className="flex flex-col items-center gap-2">
             <Avatar name={name} size={avatarSize} />
             {isCamOn === false && (
