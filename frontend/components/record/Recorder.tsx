@@ -201,7 +201,10 @@ export function Recorder({
       const mr = new MediaRecorder(merged, {
         mimeType,
         videoBitsPerSecond: 2_500_000,
-        audioBitsPerSecond: 128_000, // explicit — some browsers drop audio silently otherwise
+        // 192k Opus is well above transparency for speech and gives the
+        // server transcode a cleaner source to work with. Some browsers drop
+        // audio silently if no explicit bitrate is set.
+        audioBitsPerSecond: 192_000,
       });
       mr.ondataavailable = (ev) => {
         if (ev.data.size === 0) return;

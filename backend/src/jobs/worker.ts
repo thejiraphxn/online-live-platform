@@ -108,17 +108,24 @@ function transcode(input: string, output: string): Promise<void> {
         "scale='trunc(min(iw\\,1920)/2)*2':'trunc(min(ih\\,1080)/2)*2'",
         '-g',
         '60',
-        // Resample audio to fix any sync drift introduced by VFR→CFR.
+        // Audio chain (cheap on CPU, big quality win for lectures):
+        //   highpass 80Hz   — kill HVAC rumble + mic-stand bumps
+        //   loudnorm        — EBU R128 single-pass linear mode (real-time);
+        //                     keeps perceived volume consistent across recordings
+        //   aresample async — fix any sync drift introduced by VFR→CFR
         '-af',
-        'aresample=async=1000',
+        'highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11,aresample=async=1000',
         '-movflags',
         '+faststart',
         '-b:a',
-        '128k',
+        '160k',
         '-ar',
         '48000',
+        // Mono — classroom audio is speech. Halving channels means each
+        // remaining channel gets ~2x the bits, which sounds noticeably
+        // cleaner than 128k stereo.
         '-ac',
-        '2',
+        '1',
         '-pix_fmt',
         'yuv420p',
         '-max_muxing_queue_size',
@@ -186,13 +193,13 @@ function transcodeSimple(input: string, output: string): Promise<void> {
         '-c:a',
         'aac',
         '-b:a',
-        '128k',
+        '160k',
         '-ar',
         '48000',
         '-ac',
-        '2',
+        '1',
         '-af',
-        'aresample=async=1000',
+        'highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11,aresample=async=1000',
         '-movflags',
         '+faststart',
         '-pix_fmt',

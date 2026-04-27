@@ -319,10 +319,10 @@ export default function CourseDetailPage({ params }: { params: { courseId: strin
               className="h-9 px-2 border border-ink rounded text-sm bg-paper"
             >
               <option value="">All statuses</option>
-              <option value="DRAFT">Draft</option>
-              <option value="SCHEDULED">Scheduled</option>
-              <option value="LIVE">Live</option>
-              <option value="ENDED">Ended</option>
+              <option value={SessionStatus.DRAFT}>Draft</option>
+              <option value={SessionStatus.SCHEDULED}>Scheduled</option>
+              <option value={SessionStatus.LIVE}>Live</option>
+              <option value={SessionStatus.ENDED}>Ended</option>
             </select>
             <div className="flex-1" />
             <div className="flex border border-ink rounded overflow-hidden text-xs">
@@ -654,10 +654,10 @@ function CourseMembers({ courseId, canEdit }: { courseId: string; canEdit: boole
           <select
             name="role"
             className="h-9 px-2 border border-ink rounded text-sm"
-            defaultValue="STUDENT"
+            defaultValue={CourseRole.STUDENT}
           >
-            <option value="STUDENT">STUDENT</option>
-            <option value="TEACHER">TEACHER</option>
+            <option value={CourseRole.STUDENT}>{CourseRole.STUDENT}</option>
+            <option value={CourseRole.TEACHER}>{CourseRole.TEACHER}</option>
           </select>
           <Button type="submit" variant="primary" size="sm">
             Add member

@@ -3,13 +3,14 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { CourseRole } from '@/lib/enums';
 
 type Stint = { joinedAt: string; leftAt: string | null; seconds: number };
 type Row = {
   userId: string;
   userName: string;
   email: string;
-  role: 'TEACHER' | 'STUDENT';
+  role: CourseRole;
   totalSeconds: number;
   stintCount: number;
   firstSeenAt: string | null;
@@ -64,7 +65,7 @@ export function AttendanceSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const students = (rows ?? []).filter((r) => r.role === 'STUDENT');
+  const students = (rows ?? []).filter((r) => r.role === CourseRole.STUDENT);
   const attended = students.filter((r) => r.totalSeconds > 0);
   const noShow = students.filter((r) => r.totalSeconds === 0);
 

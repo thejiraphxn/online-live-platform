@@ -7,9 +7,9 @@ import { PreflightCheck } from '@/components/record/PreflightCheck';
 import { Button } from '@/components/ui/Button';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { useToast } from '@/components/ui/Toast';
-import { useLiveRoom, pickPrimaryStream } from '@/components/live/useLiveRoom';
+import { useLiveRoom } from '@/components/live/useLiveRoom';
 import { LivePanel } from '@/components/live/LivePanel';
-import { RemoteVideo } from '@/components/live/RemoteVideo';
+import { MeetingGrid } from '@/components/live/MeetingGrid';
 import { CourseRole, RecordingStatus } from '@/lib/enums';
 
 type Session = {
@@ -161,10 +161,7 @@ export default function RecordPage({ params }: { params: { courseId: string; ses
     rec?.status === RecordingStatus.READY;
   const showPreviousFailed = rec?.status === RecordingStatus.FAILED && !processingStatus;
 
-  // Student remote videos (those accepted to publish) — only render publishers
-  const publishingStudents = liveState.participants.filter(
-    (p) => p.role === CourseRole.STUDENT && p.isPublishing && p.socketId !== liveState.mySocketId,
-  );
+  const myself = liveState.participants.find((p) => p.socketId === liveState.mySocketId);
 
   return (
     <div className="p-6 flex flex-col gap-4 max-w-[1400px]">
@@ -247,33 +244,21 @@ export default function RecordPage({ params }: { params: { courseId: string; ses
             </div>
           )}
 
-          {webcamStream && (
-            <div className="border border-ink rounded p-3">
-              <div className="text-[11px] font-semibold text-ink-soft mb-2">WEBCAM PREVIEW</div>
-              <RemoteVideo
-                stream={webcamStream}
-                muted
-                label="you"
-                className="aspect-video max-w-xs"
-              />
-            </div>
-          )}
-
-          {publishingStudents.length > 0 && (
+          {liveState.connected && (
             <div className="border border-ink rounded p-3">
               <div className="text-[11px] font-semibold text-ink-soft mb-2">
-                STUDENT CAM/MIC ({publishingStudents.length})
+                IN ROOM ({liveState.participants.length})
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                {publishingStudents.map((p) => (
-                  <RemoteVideo
-                    key={p.socketId}
-                    stream={pickPrimaryStream(liveState.remoteStreams.get(p.socketId))}
-                    label={p.name}
-                    className="aspect-video"
-                  />
-                ))}
-              </div>
+              <MeetingGrid
+                state={liveState}
+                selfRole={CourseRole.TEACHER}
+                selfName={myself?.name ?? 'You'}
+                selfStream={webcamStream}
+                selfMicOn={true}
+                selfCamOn={!!webcamStream}
+                showMainSpeaker={false}
+                emptyMainState="Nobody in the room yet"
+              />
             </div>
           )}
 

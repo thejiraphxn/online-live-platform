@@ -36,10 +36,14 @@ export const CourseVisibility = {
 export type CourseVisibility = (typeof CourseVisibility)[keyof typeof CourseVisibility];
 
 // Helpers
-export function isTeacherRole(r: string | null | undefined): r is 'TEACHER' {
+export function isTeacherRole(
+  r: string | null | undefined,
+): r is typeof CourseRole.TEACHER {
   return r === CourseRole.TEACHER;
 }
-export function isStudentRole(r: string | null | undefined): r is 'STUDENT' {
+export function isStudentRole(
+  r: string | null | undefined,
+): r is typeof CourseRole.STUDENT {
   return r === CourseRole.STUDENT;
 }
 

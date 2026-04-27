@@ -78,10 +78,10 @@ export default function MembersPage({ params }: { params: { courseId: string } }
           <select
             name="role"
             className="h-9 px-2 border border-ink rounded text-sm"
-            defaultValue="STUDENT"
+            defaultValue={CourseRole.STUDENT}
           >
-            <option value="STUDENT">STUDENT</option>
-            <option value="TEACHER">TEACHER</option>
+            <option value={CourseRole.STUDENT}>{CourseRole.STUDENT}</option>
+            <option value={CourseRole.TEACHER}>{CourseRole.TEACHER}</option>
           </select>
           <Button type="submit" variant="primary" size="sm">
             Add

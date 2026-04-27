@@ -1,3 +1,5 @@
+import type { CourseRole } from './enums';
+
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:4000/api/v1';
 
 type ApiInit = Omit<RequestInit, 'body'> & {
@@ -39,7 +41,7 @@ export type Me = {
   name: string;
   memberships: {
     courseId: string;
-    role: 'TEACHER' | 'STUDENT';
+    role: CourseRole;
     course: { id: string; code: string; title: string };
   }[];
 };
